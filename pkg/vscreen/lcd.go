@@ -10,10 +10,12 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
+	"os"
 	"strings"
 
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/basicfont"
+	"golang.org/x/image/font/opentype"
 	"golang.org/x/image/math/fixed"
 )
 
@@ -181,6 +183,7 @@ func CreateTextImageFromSlice(lines []string) []uint16 {
 type Line struct {
 	Text  string
 	Color color.Color
+	Big   bool
 }
 
 /*
@@ -227,6 +230,96 @@ func CreateTextImageFromLines(lines []Line) []uint16 {
 		for x := 0; x < W; x++ {
 			r, g, b, _ := img.At(x, y).RGBA()
 			// Convert the color format from RGBA to RGB565
+			pixel := (r>>8&0xF8)<<8 | (g>>8&0xFC)<<3 | b>>8>>3
+			pixels[y*W+x] = uint16(pixel)
+		}
+	}
+
+	return pixels
+}
+
+var fontData *opentype.Font
+
+// recommended: 12, 24, 13, 26
+func CreateTextImageFromLinesWithCustomFont(lines []Line, smallSize, bigSize float64, smallAdvance, bigAdvance int) []uint16 {
+	var W, H int
+	if isMidas {
+		W = 160
+		H = 80
+	} else {
+		W = 184
+		H = 96
+	}
+
+	img := image.NewRGBA(image.Rect(0, 0, W, H))
+	black := color.RGBA{0, 0, 0, 255}
+
+	draw.Draw(img, img.Bounds(), &image.Uniform{black}, image.Point{}, draw.Src)
+
+	if fontData == nil {
+		fontBytes, err := os.ReadFile("font.ttf")
+		if err != nil {
+			panic(err)
+		}
+
+		fontData, err = opentype.Parse(fontBytes)
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	normalFace, err := opentype.NewFace(fontData, &opentype.FaceOptions{
+		Size:    smallSize,
+		DPI:     72,
+		Hinting: font.HintingFull,
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	bigFace, err := opentype.NewFace(fontData, &opentype.FaceOptions{
+		Size:    bigSize,
+		DPI:     72,
+		Hinting: font.HintingFull,
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	d := &font.Drawer{
+		Dst: img,
+	}
+
+	y := 0
+
+	for _, line := range lines {
+		var face font.Face
+		var advance int
+
+		if line.Big {
+			face = bigFace
+			advance = bigAdvance
+		} else {
+			face = normalFace
+			advance = smallAdvance
+		}
+
+		if y+advance >= H {
+			break
+		}
+
+		d.Face = face
+		d.Src = &image.Uniform{line.Color}
+		d.Dot = fixed.P(0, y+advance)
+
+		d.DrawString(line.Text)
+		y += advance
+	}
+
+	pixels := make([]uint16, W*H)
+	for y := 0; y < H; y++ {
+		for x := 0; x < W; x++ {
+			r, g, b, _ := img.At(x, y).RGBA()
 			pixel := (r>>8&0xF8)<<8 | (g>>8&0xFC)<<3 | b>>8>>3
 			pixels[y*W+x] = uint16(pixel)
 		}
